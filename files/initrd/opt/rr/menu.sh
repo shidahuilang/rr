@@ -149,7 +149,7 @@ function modelMenu() {
       done <<<$(cat "${TMP_PATH}/modellist")
       [ ${FLGNEX} -eq 1 ] && echo "f \"\Z1$(TEXT "Disable flags restriction")\Zn\"" >>"${TMP_PATH}/menu"
       DIALOG --title "$(TEXT "Model")" \
-        --menu "$(TEXT "Choose the model")" 0 0 0 --file "${TMP_PATH}/menu" \
+        --menu "$(TEXT "Choose the model")" 0 0 20 --file "${TMP_PATH}/menu" \
         2>${TMP_PATH}/resp
       [ $? -ne 0 ] && return 0
       resp=$(cat ${TMP_PATH}/resp)
@@ -189,7 +189,6 @@ function modelMenu() {
     done
     writeConfigKey "synoinfo" "{}" "${USER_CONFIG_FILE}"
     writeConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
-    writeConfigKey "kernel" "official" "${USER_CONFIG_FILE}"
     # Remove old files
     rm -f "${ORI_ZIMAGE_FILE}" "${ORI_RDGZ_FILE}" "${MOD_ZIMAGE_FILE}" "${MOD_RDGZ_FILE}" >/dev/null 2>&1 || true
     rm -f "${PART1_PATH}/grub_cksum.syno" "${PART1_PATH}/GRUB_VER" "${PART2_PATH}/"* >/dev/null 2>&1 || true
@@ -328,9 +327,17 @@ function productversMenu() {
   while IFS=': ' read KEY VALUE; do
     writeConfigKey "synoinfo.\"${KEY}\"" "${VALUE}" "${USER_CONFIG_FILE}"
   done <<<$(readConfigMap "platforms.${PLATFORM}.synoinfo" "${WORK_PATH}/platforms.yml")
-  # Check addons
   KVER="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kver" "${WORK_PATH}/platforms.yml")"
   KPRE="$(readConfigKey "platforms.${PLATFORM}.productvers.\"${PRODUCTVER}\".kpre" "${WORK_PATH}/platforms.yml")"
+  # Check kernel
+  if [ -f "${CKS_PATH}/bzImage-${PLATFORM}-$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}.gz" ] &&
+    [ -f "${CKS_PATH}/modules-${PLATFORM}-$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}.tgz" ]; then
+    :
+  else
+    KERNEL='official'
+    writeConfigKey "kernel" "${KERNEL}" "${USER_CONFIG_FILE}"
+  fi
+  # Check addons
   while IFS=': ' read ADDON PARAM; do
     [ -z "${ADDON}" ] && continue
     if ! checkAddonExist "${ADDON}" "${PLATFORM}" "$([ -n "${KPRE}" ] && echo "${KPRE}-")${KVER}"; then
@@ -444,13 +451,13 @@ function ParsePat() {
       --msgbox "${MSG}" 0 0
     return
   fi
-  DIALOG --title "$(TEXT "Product Version")" \
+  DIALOG --title "$(TEXT "Parse Pat")" \
     --no-items --menu "$(TEXT "Choose a pat file")" 0 0 0 ${ITEMS} \
     2>${TMP_PATH}/resp
   [ $? -ne 0 ] && return
   PAT_PATH=$(cat ${TMP_PATH}/resp)
   if [ ! -f "${PAT_PATH}" ]; then
-    DIALOG --title "$(TEXT "Update")" \
+    DIALOG --title "$(TEXT "Parse Pat")" \
       --msgbox "$(TEXT "pat Invalid, try again!")" 0 0
     return
   fi
@@ -491,10 +498,10 @@ function ParsePat() {
     echo "$(TEXT "Ready!")"
     sleep 3
     break
-  done 2>&1 | DIALOG --title "$(TEXT "Main menu")" \
+  done 2>&1 | DIALOG --title "$(TEXT "Parse Pat")" \
     --progressbox "$(TEXT "Making ...")" 20 100
   if [ -f "${LOG_FILE}" ]; then
-    DIALOG --title "$(TEXT "Error")" \
+    DIALOG --title "$(TEXT "Parse Pat")" \
       --msgbox "$(cat ${LOG_FILE})" 0 0
     rm -f "${LOG_FILE}"
     return 1
@@ -884,13 +891,22 @@ function cmdlineMenu() {
       MSG+="$(TEXT " * \Z4apparmor.mode=complain\Zn\n    Set the AppArmor security module to complain mode.\n")"
       MSG+="$(TEXT " * \Z4pci=nommconf\Zn\n    Disable the use of Memory-Mapped Configuration for PCI devices(use this parameter cautiously).\n")"
       MSG+="$(TEXT " * \Z4consoleblank=300\Zn\n    Set the console to auto turnoff display 300 seconds after no activity (measured in seconds).\n")"
-      MSG+="$(TEXT "\nEnter the parameter name and value you need to add.\n")"
-      LINENUM=$(($(echo -e "${MSG}" | wc -l) + 10))
-      RET=0
+      MSG+="$(TEXT "Please enter the parameter key and value you need to add.\n")"
+
+      LINENUM=0
+      while read -r line; do LINENUM=$((LINENUM + 1 + ${#line} / 96)); done <<<"$(printf "${MSG}")" # When the width is 100, each line displays 96 characters.
+      LINENUM=$((${LINENUM:-0} + 9))                                                                # When there are 2 parameters, 9 is the minimum value to include 1 line of MSG.
+
+      DIALOG_MAXX=$(ttysize 2>/dev/null | awk '{print $1}')
+      DIALOG_MAXY=$(ttysize 2>/dev/null | awk '{print $2}')
+      if [ ${LINENUM:-0} -ge ${DIALOG_MAXY:-0} ]; then
+        MSG="$(TEXT "Please enter the parameter key and value you need to add.\n")"
+        LINENUM=9
+      fi
+
       while true; do
-        [ ${RET} -eq 255 ] && MSG="$(TEXT "Commonly used cmdlines:\n")"
         DIALOG --title "$(TEXT "Cmdline")" \
-          --form "${MSG}" ${LINENUM:-16} 100 2 "Name:" 1 1 "" 1 10 85 0 "Value:" 2 1 "" 2 10 85 0 \
+          --form "${MSG}" ${LINENUM:-9} 100 2 "Name:" 1 1 "" 1 10 85 0 "Value:" 2 1 "" 2 10 85 0 \
           2>"${TMP_PATH}/resp"
         RET=$?
         case ${RET} in
@@ -909,7 +925,7 @@ function cmdlineMenu() {
           break
           ;;
         255) # ESC
-          # break
+          break
           ;;
         esac
       done
@@ -1020,13 +1036,22 @@ function synoinfoMenu() {
       MSG+="$(TEXT " * \Z4esataportcfg=0x????\Zn\n    Esata disks mask(Not apply to DT models).\n")"
       MSG+="$(TEXT " * \Z4usbportcfg=0x????\Zn\n    USB disks mask(Not apply to DT models).\n")"
       MSG+="$(TEXT " * \Z4max_sys_raid_disks=12\Zn\n    Maximum number of system partition(md0) raid disks.\n")"
-      MSG+="$(TEXT "\nEnter the parameter name and value you need to add.\n")"
-      LINENUM=$(($(echo -e "${MSG}" | wc -l) + 10))
-      RET=0
+      MSG="$(TEXT "Please enter the parameter key and value you need to add.\n")"
+
+      LINENUM=0
+      while read -r line; do LINENUM=$((LINENUM + 1 + ${#line} / 96)); done <<<"$(printf "${MSG}")" # When the width is 100, each line displays 96 characters.
+      LINENUM=$((${LINENUM:-0} + 9))                                                                # When there are 2 parameters, 9 is the minimum value to include 1 line of MSG.
+
+      DIALOG_MAXX=$(ttysize 2>/dev/null | awk '{print $1}')
+      DIALOG_MAXY=$(ttysize 2>/dev/null | awk '{print $2}')
+      if [ ${LINENUM:-0} -ge ${DIALOG_MAXY:-0} ]; then
+        MSG="$(TEXT "Please enter the parameter key and value you need to add.\n")"
+        LINENUM=9
+      fi
+
       while true; do
-        [ ${RET} -eq 255 ] && MSG="$(TEXT "Commonly used synoinfo:\n")"
         DIALOG --title "$(TEXT "Synoinfo")" \
-          --form "${MSG}" ${LINENUM:-16} 100 2 "Name:" 1 1 "" 1 10 85 0 "Value:" 2 1 "" 2 10 85 0 \
+          --form "${MSG}" ${LINENUM:-9} 100 2 "Name:" 1 1 "" 1 10 85 0 "Value:" 2 1 "" 2 10 85 0 \
           2>"${TMP_PATH}/resp"
         RET=$?
         case ${RET} in
@@ -1046,7 +1071,7 @@ function synoinfoMenu() {
           break
           ;;
         255) # ESC
-          # break
+          break
           ;;
         esac
       done
@@ -1627,7 +1652,7 @@ function setWirelessAccount() {
 function showDisksInfo() {
   MSG=""
   NUMPORTS=0
-  [ $(lspci -d ::106 2>/dev/null | wc -l) -gt 0 ] && MSG+="\nATA:\n"
+  [ $(lspci -d ::106 2>/dev/null | wc -l) -gt 0 ] && MSG+="\nSATA:\n"
   for PCI in $(lspci -d ::106 2>/dev/null | awk '{print $1}'); do
     NAME=$(lspci -s "${PCI}" 2>/dev/null | sed "s/\ .*://")
     MSG+="\Zb${NAME}\Zn\nPorts: "
@@ -1671,6 +1696,14 @@ function showDisksInfo() {
     MSG+="\Zb${NAME}\Zn\nNumber: ${PORTNUM}\n"
     NUMPORTS=$((${NUMPORTS} + ${PORTNUM}))
   done
+  [ $(lspci -d ::101 2>/dev/null | wc -l) -gt 0 ] && MSG+="\nIDE:\n"
+  for PCI in $(lspci -d ::101 2>/dev/null | awk '{print $1}'); do
+    NAME=$(lspci -s "${PCI}" 2>/dev/null | sed "s/\ .*://")
+    PORTNUM=$(ls -l /sys/block/* 2>/dev/null | grep "${PCI}" | wc -l)
+    [ ${PORTNUM} -eq 0 ] && continue
+    MSG+="\Zb${NAME}\Zn\nNumber: ${PORTNUM}\n"
+    NUMPORTS=$((${NUMPORTS} + ${PORTNUM}))
+  done
   [ $(ls -l /sys/class/scsi_host 2>/dev/null | grep usb | wc -l) -gt 0 ] && MSG+="\nUSB:\n"
   for PCI in $(lspci -d ::c03 2>/dev/null | awk '{print $1}'); do
     NAME=$(lspci -s "${PCI}" 2>/dev/null | sed "s/\ .*://")
@@ -1696,6 +1729,13 @@ function showDisksInfo() {
     MSG+="\Zb${NAME}\Zn\nNumber: ${PORTNUM}\n"
     NUMPORTS=$((${NUMPORTS} + ${PORTNUM}))
   done
+  if [ $(lsblk -dpno KNAME,SUBSYSTEMS 2>/dev/null | grep 'vmbus:acpi' | wc -l) -gt 0 ]; then
+    MSG+="\nVMBUS:\n"
+    NAME="vmbus:acpi"
+    PORTNUM=$(lsblk -dpno KNAME,SUBSYSTEMS 2>/dev/null | grep 'vmbus:acpi' | wc -l)
+    MSG+="\Zb${NAME}\Zn\nNumber: ${PORTNUM}\n"
+    NUMPORTS=$((${NUMPORTS} + ${PORTNUM}))
+  fi
   MSG+="\n"
   MSG+="$(printf "$(TEXT "\nTotal of ports: %s\n")" "${NUMPORTS}")"
   MSG+="$(TEXT "\nPorts with color \Z1red\Zn as DUMMY, color \Z2\Zbgreen\Zn has drive connected.")"
@@ -1710,12 +1750,11 @@ function showDisksInfo() {
 function formatDisks() {
   rm -f "${TMP_PATH}/opts"
   while read KNAME ID SIZE TYPE PKNAME; do
-    [ -z "${KNAME}" ] && continue
+    [ "${KNAME}" = "N/A" ] && continue
     [[ "${KNAME}" = /dev/md* ]] && continue
     [ "${KNAME}" = "${LOADER_DISK}" -o "${PKNAME}" = "${LOADER_DISK}" ] && continue
-    [ -z "${ID}" ] && ID="Unknown"
     printf "\"%s\" \"%-6s %-4s %s\" \"off\"\n" "${KNAME}" "${SIZE}" "${TYPE}" "${ID}" >>"${TMP_PATH}/opts"
-  done <<<$(lsblk -pno KNAME,ID,SIZE,TYPE,PKNAME)
+  done <<<$(lsblk -Jpno KNAME,ID,SIZE,TYPE,PKNAME 2>/dev/null | sed 's|null|"N/A"|g' | jq -r '.blockdevices[] | "\(.kname) \(.id) \(.size) \(.type) \(.pkname)"' 2>/dev/null)
   if [ ! -f "${TMP_PATH}/opts" ]; then
     DIALOG --title "$(TEXT "Advanced")" \
       --msgbox "$(TEXT "No disk found!")" 0 0
@@ -1997,6 +2036,7 @@ function forceEnableDSMTelnetSSH() {
   fi
   (
     ONBOOTUP=""
+    ONBOOTUP="${ONBOOTUP}systemctl restart inetd\n"
     ONBOOTUP="${ONBOOTUP}synowebapi --exec api=SYNO.Core.Terminal method=set version=3 enable_telnet=true enable_ssh=true ssh_port=22 forbid_console=false\n"
     ONBOOTUP="${ONBOOTUP}echo \"DELETE FROM task WHERE task_name LIKE ''RRONBOOTUPRR_SSH'';\" | sqlite3 /usr/syno/etc/esynoscheduler/esynoscheduler.db\n"
     mkdir -p "${TMP_PATH}/mdX"
@@ -2094,10 +2134,10 @@ function initDSMNetwork {
 function cloneBootloaderDisk() {
   rm -f "${TMP_PATH}/opts"
   while read KNAME ID SIZE PKNAME; do
-    [ -z "${KNAME}" -o -z "${ID}" ] && continue
+    [ "${KNAME}" = "N/A" ] && continue
     [ "${KNAME}" = "${LOADER_DISK}" -o "${PKNAME}" = "${LOADER_DISK}" ] && continue
     printf "\"%s\" \"%-6s %s\" \"off\"\n" "${KNAME}" "${SIZE}" "${ID}" >>"${TMP_PATH}/opts"
-  done <<<$(lsblk -dpno KNAME,ID,SIZE,PKNAME)
+  done <<<$(lsblk -Jpno KNAME,ID,SIZE,PKNAME 2>/dev/null | sed 's|null|"N/A"|g' | jq -r '.blockdevices[] | "\(.kname) \(.id) \(.size) \(.pkname)"' 2>/dev/null)
   if [ ! -f "${TMP_PATH}/opts" ]; then
     DIALOG --title "$(TEXT "Advanced")" \
       --msgbox "$(TEXT "No disk found!")" 0 0
@@ -2217,42 +2257,71 @@ function cloneBootloaderDisk() {
 }
 
 function reportBugs() {
-  if [ -d "${PART1_PATH}/logs" ]; then
-    DSMROOTS="$(findDSMRoot)"
-    if [ -n "${DSMROOTS}" ]; then
-      mkdir -p "${TMP_PATH}/mdX"
-      for I in ${DSMROOTS}; do
-        mount -t ext4 "${I}" "${TMP_PATH}/mdX"
-        [ $? -ne 0 ] && continue
-        mkdir -p "${PART1_PATH}/logs/md0/log"
-        cp -rf ${TMP_PATH}/mdX/.log.junior "${PART1_PATH}/logs/md0"
-        cp -rf ${TMP_PATH}/mdX/var/log/messages ${TMP_PATH}/mdX/var/log/*.log "${PART1_PATH}/logs/md0/log"
-        umount "${TMP_PATH}/mdX"
-      done
-      rm -rf "${TMP_PATH}/mdX"
-    fi
-    rm -f "${TMP_PATH}/logs.tar.gz"
-    tar -czf "${TMP_PATH}/logs.tar.gz" -C "${PART1_PATH}" logs
-    if [ -z "${SSH_TTY}" ]; then # web
-      mv -f "${TMP_PATH}/logs.tar.gz" "/var/www/data/logs.tar.gz"
-      URL="http://$(getIP)/logs.tar.gz"
-      DIALOG --title "$(TEXT "Advanced")" \
-        --msgbox "$(printf "$(TEXT "Please via %s to download the logs,\nAnd go to github to create an issue and upload the logs.")" "${URL}")" 0 0
-    else
-      sz -be -B 536870912 "${TMP_PATH}/logs.tar.gz"
-      DIALOG --title "$(TEXT "Advanced")" \
-        --msgbox "$(TEXT "Please go to github to create an issue and upload the logs.")" 0 0
-    fi
+  rm -rf "${TMP_PATH}/logs" "${TMP_PATH}/logs.tar.gz"
+  MSG=""
+  SYSLOG=0
+  DSMROOTS="$(findDSMRoot)"
+  if [ -n "${DSMROOTS}" ]; then
+    mkdir -p "${TMP_PATH}/mdX"
+    for I in ${DSMROOTS}; do
+      mount -t ext4 "${I}" "${TMP_PATH}/mdX"
+      [ $? -ne 0 ] && continue
+      mkdir -p "${TMP_PATH}/logs/md0/log"
+      cp -rf ${TMP_PATH}/mdX/.log.junior "${TMP_PATH}/logs/md0"
+      cp -rf ${TMP_PATH}/mdX/var/log/messages ${TMP_PATH}/mdX/var/log/*.log "${TMP_PATH}/logs/md0/log"
+      SYSLOG=1
+      umount "${TMP_PATH}/mdX"
+    done
+    rm -rf "${TMP_PATH}/mdX"
+  fi
+  if [ ${SYSLOG} -eq 1 ]; then
+    MSG+="$(TEXT "Find the system logs!\n")"
   else
-    MSG=""
-    MSG+="$(TEXT "\Z1No logs found!\Zn\n\n")"
+    MSG+="$(TEXT "Not Find system logs!\n")"
+  fi
+
+  PSTORE=0
+  if [ -n "$(ls /sys/fs/pstore 2>/dev/null)" ]; then
+    mkdir -p "${TMP_PATH}/logs/pstore"
+    cp -rf /sys/fs/pstore/* "${TMP_PATH}/logs/pstore"
+    [ -n "$(ls /sys/fs/pstore/*.z 2>/dev/null)" ] && zlib-flate -uncompress </sys/fs/pstore/*.z >"${TMP_PATH}/logs/pstore/ps.log" 2>/dev/null
+    PSTORE=1
+  fi
+  if [ ${PSTORE} -eq 1 ]; then
+    MSG+="$(TEXT "Find the pstore logs!\n")"
+  else
+    MSG+="$(TEXT "Not Find pstore logs!\n")"
+  fi
+
+  ADDONS=0
+  if [ -d "${PART1_PATH}/logs" ]; then
+    mkdir -p "${TMP_PATH}/logs/addons"
+    cp -rf "${PART1_PATH}/logs"/* "${TMP_PATH}/logs/addons"
+    ADDONS=1
+  fi
+  if [ ${ADDONS} -eq 1 ]; then
+    MSG+="$(TEXT "Find the addons logs!\n")"
+  else
+    MSG+="$(TEXT "Not Find addons logs!\n")"
     MSG+="$(TEXT "Please do as follows:\n")"
     MSG+="$(TEXT " 1. Add dbgutils in addons and rebuild.\n")"
     MSG+="$(TEXT " 2. Wait 10 minutes after booting.\n")"
     MSG+="$(TEXT " 3. Reboot into RR and go to this option.\n")"
-    DIALOG --title "$(TEXT "Advanced")" \
-      --msgbox "${MSG}" 0 0
   fi
+
+  if [ -n "$(ls -A ${TMP_PATH}/logs 2>/dev/null)" ]; then
+    tar -czf "${TMP_PATH}/logs.tar.gz" -C "${TMP_PATH}" logs
+    if [ -z "${SSH_TTY}" ]; then # web
+      mv -f "${TMP_PATH}/logs.tar.gz" "/var/www/data/logs.tar.gz"
+      URL="http://$(getIP)/logs.tar.gz"
+      MSG+="$(printf "$(TEXT "Please via %s to download the logs,\nAnd go to github to create an issue and upload the logs.")" "${URL}")"
+    else
+      sz -be -B 536870912 "${TMP_PATH}/logs.tar.gz"
+      MSG+="$(TEXT "Please go to github to create an issue and upload the logs.")"
+    fi
+  fi
+  DIALOG --title "$(TEXT "Advanced")" \
+    --msgbox "${MSG}" 0 0
 }
 
 ###############################################################################
@@ -2319,10 +2388,6 @@ function advancedMenu() {
       echo "i \"$(TEXT "Timeout of get ip in boot:") \Z4${BOOTIPWAIT}\Zn\"" >>"${TMP_PATH}/menu"
       echo "w \"$(TEXT "Timeout of boot wait:") \Z4${BOOTWAIT}\Zn\"" >>"${TMP_PATH}/menu"
       echo "k \"$(TEXT "kernel switching method:") \Z4${KERNELWAY}\Zn\"" >>"${TMP_PATH}/menu"
-      if false; then  # Some GPU have compatibility issues, so this function is temporarily disabled. RR_CMDLINE= ... nomodeset
-        checkCmdline "rr_cmdline" "nomodeset" && POWEROFFDISPLAY="false" || POWEROFFDISPLAY="true"
-        echo "7 \"$(TEXT "Power off display after boot: ") \Z4${POWEROFFDISPLAY}\Zn\"" >>"${TMP_PATH}/menu"
-      fi
     fi
     echo "n \"$(TEXT "Reboot on kernel panic:") \Z4${KERNELPANIC}\Zn\"" >>"${TMP_PATH}/menu"
     if [ -n "$(ls /dev/mmcblk* 2>/dev/null)" ]; then
@@ -2447,18 +2512,6 @@ function advancedMenu() {
       [ "${KERNELWAY}" = "kexec" ] && KERNELWAY='power' || KERNELWAY='kexec'
       writeConfigKey "kernelway" "${KERNELWAY}" "${USER_CONFIG_FILE}"
       NEXT="k"
-      ;;
-    7)
-      DIALOG --title "$(TEXT "Advanced")" \
-        --yesno "$(TEXT "Modifying this item requires a reboot, continue?")" 0 0
-      RET=$?
-      [ ${RET} -ne 0 ] && continue
-      checkCmdline "rr_cmdline" "nomodeset" && delCmdline "rr_cmdline" "nomodeset" || addCmdline "rr_cmdline" "nomodeset"
-      DIALOG --title "$(TEXT "Advanced")" \
-        --infobox "$(TEXT "Reboot to RR")" 0 0
-      rebootTo config
-      exit 0
-      NEXT="7"
       ;;
     n)
       rm -f "${TMP_PATH}/opts"
@@ -3263,14 +3316,14 @@ function updateMenu() {
     fi
     case "$(cat ${TMP_PATH}/resp)" in
     a)
-      F="$(ls ${TMP_PATH}/updateall*.zip 2>/dev/null | sort -V | tail -n 1)"
+      F="$(ls ${PART3_PATH}/updateall*.zip ${TMP_PATH}/updateall*.zip 2>/dev/null | sort -V | tail -n 1)"
       [ -n "${F}" ] && [ -f "${F}.downloading" ] && rm -f "${F}" && rm -f "${F}.downloading" && F=""
       [ -z "${F}" ] && downloadExts "$(TEXT "All")" "${CUR_RR_VER:-None}" "https://github.com/RROrg/rr" "updateall" "${SILENT}"
       F="$(ls ${TMP_PATH}/updateall*.zip 2>/dev/null | sort -V | tail -n 1)"
       [ -n "${F}" ] && updateRR "${F}" "${SILENT}" && rm -f ${TMP_PATH}/updateall*.zip
       ;;
     r)
-      F="$(ls ${TMP_PATH}/update*.zip 2>/dev/null | sort -V | tail -n 1)"
+      F="$(ls ${PART3_PATH}/update*.zip ${TMP_PATH}/update*.zip 2>/dev/null | sort -V | tail -n 1)"
       [ -n "${F}" ] && [ -f "${F}.downloading" ] && rm -f "${F}" && rm -f "${F}.downloading" && F=""
       [ -z "${F}" ] && downloadExts "$(TEXT "RR")" "${CUR_RR_VER:-None}" "https://github.com/RROrg/rr" "update" "${SILENT}"
       F="$(ls ${TMP_PATH}/update*.zip 2>/dev/null | sort -V | tail -n 1)"
@@ -3282,7 +3335,7 @@ function updateMenu() {
           --msgbox "$(printf "$(TEXT "No longer supports update %s separately. Please choose to update All/RR")" "$(TEXT "Addons")")" 0 0
         continue
       fi
-      F="$(ls ${TMP_PATH}/addons*.zip 2>/dev/null | sort -V | tail -n 1)"
+      F="$(ls ${PART3_PATH}/addons*.zip ${TMP_PATH}/addons*.zip 2>/dev/null | sort -V | tail -n 1)"
       [ -n "${F}" ] && [ -f "${F}.downloading" ] && rm -f "${F}" && rm -f "${F}.downloading" && F=""
       [ -z "${F}" ] && downloadExts "$(TEXT "Addons")" "${CUR_ADDONS_VER:-None}" "https://github.com/RROrg/rr-addons" "addons" "${SILENT}"
       F="$(ls ${TMP_PATH}/addons*.zip 2>/dev/null | sort -V | tail -n 1)"
@@ -3294,7 +3347,7 @@ function updateMenu() {
           --msgbox "$(printf "$(TEXT "No longer supports update %s separately. Please choose to update All/RR")" "$(TEXT "Modules")")" 0 0
         continue
       fi
-      F="$(ls ${TMP_PATH}/modules*.zip 2>/dev/null | sort -V | tail -n 1)"
+      F="$(ls ${PART3_PATH}/modules*.zip ${TMP_PATH}/modules*.zip 2>/dev/null | sort -V | tail -n 1)"
       [ -n "${F}" ] && [ -f "${F}.downloading" ] && rm -f "${F}" && rm -f "${F}.downloading" && F=""
       [ -z "${F}" ] && downloadExts "$(TEXT "Modules")" "${CUR_MODULES_VER:-None}" "https://github.com/RROrg/rr-modules" "modules" "${SILENT}"
       F="$(ls ${TMP_PATH}/modules*.zip 2>/dev/null | sort -V | tail -n 1)"
@@ -3306,7 +3359,7 @@ function updateMenu() {
           --msgbox "$(printf "$(TEXT "No longer supports update %s separately. Please choose to update All/RR")" "$(TEXT "LKMs")")" 0 0
         continue
       fi
-      F="$(ls ${TMP_PATH}/rp-lkms*.zip 2>/dev/null | sort -V | tail -n 1)"
+      F="$(ls ${PART3_PATH}/rp-lkms*.zip ${TMP_PATH}/rp-lkms*.zip 2>/dev/null | sort -V | tail -n 1)"
       [ -n "${F}" ] && [ -f "${F}.downloading" ] && rm -f "${F}" && rm -f "${F}.downloading" && F=""
       [ -z "${F}" ] && downloadExts "$(TEXT "LKMs")" "${CUR_LKMS_VER:-None}" "https://github.com/RROrg/rr-lkms" "rp-lkms" "${SILENT}"
       F="$(ls ${TMP_PATH}/rp-lkms*.zip 2>/dev/null | sort -V | tail -n 1)"
@@ -3318,7 +3371,7 @@ function updateMenu() {
           --msgbox "$(printf "$(TEXT "No longer supports update %s separately. Please choose to update All/RR")" "$(TEXT "CKs")")" 0 0
         continue
       fi
-      F="$(ls ${TMP_PATH}/rr-cks*.zip 2>/dev/null | sort -V | tail -n 1)"
+      F="$(ls ${PART3_PATH}/rr-cks*.zip ${TMP_PATH}/rr-cks*.zip 2>/dev/null | sort -V | tail -n 1)"
       [ -n "${F}" ] && [ -f "${F}.downloading" ] && rm -f "${F}" && rm -f "${F}.downloading" && F=""
       [ -z "${F}" ] && downloadExts "$(TEXT "CKs")" "${CUR_CKS_VER:-None}" "https://github.com/RROrg/rr-cks" "rr-cks" "${SILENT}"
       F="$(ls ${TMP_PATH}/rr-cks*.zip 2>/dev/null | sort -V | tail -n 1)"
@@ -3558,9 +3611,9 @@ else
         echo "x \"$(TEXT "Reboot to RR")\"" >>"${TMP_PATH}/menu"
         echo "y \"$(TEXT "Reboot to Recovery")\"" >>"${TMP_PATH}/menu"
         echo "z \"$(TEXT "Reboot to Junior")\"" >>"${TMP_PATH}/menu"
-        if efibootmgr | grep -q "^Boot0000"; then
-          echo "b \"$(TEXT "Reboot to BIOS")\"" >>"${TMP_PATH}/menu"
-        fi
+        #if efibootmgr | grep -q "^Boot0000"; then
+        echo "b \"$(TEXT "Reboot to BIOS")\"" >>"${TMP_PATH}/menu"
+        #fi
         echo "s \"$(TEXT "Back to shell")\"" >>"${TMP_PATH}/menu"
         echo "e \"$(TEXT "Exit")\"" >>"${TMP_PATH}/menu"
 
@@ -3602,8 +3655,9 @@ else
         b)
           DIALOG --title "$(TEXT "Main menu")" \
             --infobox "$(TEXT "Reboot to BIOS")" 0 0
-          efibootmgr -n 0000 >/dev/null 2>&1
-          reboot
+          #efibootmgr -n 0000 >/dev/null 2>&1
+          #reboot
+          rebootTo bios
           exit 0
           ;;
         s)

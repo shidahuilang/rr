@@ -2,7 +2,7 @@
 # ENV:
 * ### 常用工具:
    * telnet 工具 putty (下载: https://www.chiark.greenend.org.uk/~sgtatham/putty/latest.html)
-   * ssh 工具 FinalShell (下载: https://www.hostbuf.com/t/988.html)  
+   * ssh 工具 WindTerm (下载: https://github.com/kingToolbox/WindTerm)  
    * sftp 工具 WinSCP (下载: https://winscp.net/eng/index.php)
    * 文本编辑工具 Notepad3 (下载: https://github.com/rizonesoft/Notepad3/releases)
    * 镜像写盘工具 Rufus (下载: https://rufus.ie/zh/)
@@ -231,6 +231,17 @@
   systemctl disable cpufreq.service                # 永久停止 CPU 频率调节器
   netstat -tunlp                                   # 查看端口  
   lsof -i :7681                                    # 查看 7681 端口占用情况
+
+  # CPU
+  cat /sys/devices/system/cpu/cpufreq/boost        # 查看 CPU 睿频状态
+  echo 1 > /sys/devices/system/cpu/cpufreq/boost   # 开启 CPU 睿频
+  echo 0 > /sys/devices/system/cpu/cpufreq/boost   # 关闭 CPU 睿频
+  cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_available_governors # 查看可用的 CPU 频率调节器状态
+  cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor            # 查看 CPU 频率调节器状态
+  cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq            # 查看 CPU 当前频率 
+  cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq            # 查看 CPU 最大频率
+  cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_min_freq            # 查看 CPU 最小频率
+
 
   # 日志相关
   dmesg                                            # 内核日志
