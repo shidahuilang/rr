@@ -7,15 +7,19 @@ set -e
 . ${WORK_PATH}/include/addons.sh
 
 [ -z "${LOADER_DISK}" ] && die "$(TEXT "Loader is not init!")"
+checkBootLoader || die "$(TEXT "The loader is corrupted, please rewrite it!")"
 
 # Shows title
 clear
-[ -z "${COLUMNS}" ] && COLUMNS=50
+COLUMNS=$(ttysize 2>/dev/null | awk '{print $1}')
+[ -z "${COLUMNS}" ] && COLUMNS=80
 TITLE="$(printf "$(TEXT "Welcome to %s")" "$([ -z "${RR_RELEASE}" ] && echo "${RR_TITLE}" || echo "${RR_TITLE}(${RR_RELEASE})")")"
+DATE="$(date)"
 printf "\033[1;44m%*s\n" ${COLUMNS} ""
 printf "\033[1;44m%*s\033[A\n" ${COLUMNS} ""
-printf "\033[1;32m%*s\033[0m\n" $(((${#TITLE} + ${COLUMNS}) / 2)) "${TITLE}"
-printf "\033[1;44m%*s\033[0m\n" ${COLUMNS} ""
+printf "\033[1;31m%*s\033[0m\n" $(((${#TITLE} + ${COLUMNS}) / 2)) "${TITLE}"
+printf "\033[1;44m%*s\033[A\n" ${COLUMNS} ""
+printf "\033[1;32m%*s\033[0m\n" ${COLUMNS} "${DATE}"
 
 # Get first MAC address
 ETHX=$(ls /sys/class/net/ 2>/dev/null | grep -v lo) || true
@@ -61,6 +65,7 @@ initConfigKey "synoinfo" "{}" "${USER_CONFIG_FILE}"
 initConfigKey "addons" "{}" "${USER_CONFIG_FILE}"
 initConfigKey "addons.acpid" "" "${USER_CONFIG_FILE}"
 initConfigKey "addons.mountloader" "" "${USER_CONFIG_FILE}"
+initConfigKey "addons.powersched" "" "${USER_CONFIG_FILE}"
 initConfigKey "addons.reboottoloader" "" "${USER_CONFIG_FILE}"
 initConfigKey "modules" "{}" "${USER_CONFIG_FILE}"
 initConfigKey "modblacklist" "evbug,cdc_ether" "${USER_CONFIG_FILE}"
@@ -99,6 +104,7 @@ if [ ! "LOCALBUILD" = "${LOADER_DISK}" ]; then
       sleep 1
     fi
     [ "${ETH::3}" = "eth" ] && ethtool -s ${ETH} wol g 2>/dev/null || true
+    # [ "${ETH::3}" = "eth" ] && ethtool -K ${ETH} rxhash off 2>/dev/null || true
   done
 fi
 
@@ -108,7 +114,7 @@ PID="0x0001"
 TYPE="DoM"
 BUS=$(getBus "${LOADER_DISK}")
 
-BUSLIST="usb sata scsi nvme mmc xen"
+BUSLIST="usb sata sas scsi nvme mmc ide virtio vmbus xen"
 if [ "${BUS}" = "usb" ]; then
   VID="0x$(udevadm info --query property --name ${LOADER_DISK} 2>/dev/null | grep ID_VENDOR_ID | cut -d= -f2)"
   PID="0x$(udevadm info --query property --name ${LOADER_DISK} 2>/dev/null | grep ID_MODEL_ID | cut -d= -f2)"
@@ -118,7 +124,7 @@ elif ! echo "${BUSLIST}" | grep -wq "${BUS}"; then
     echo "LOCALBUILD MODE"
     TYPE="PC"
   else
-    die "$(TEXT "Loader disk neither USB or SATA/SCSI/NVME/MMC/XEN DoM")"
+    die "$(printf "$(TEXT "The boot disk does not support the current %s, only %s DoM is supported.")" "${BUS}" "${BUSLIST// /\/}")"
   fi
 fi
 

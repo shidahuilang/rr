@@ -38,6 +38,7 @@
         var repo = "RROrg/rr"
 
         var _models = {};
+        var _pats = {};
         var _addons = {};
         var _modules = {};
 
@@ -58,15 +59,19 @@
         function init() {
             httpGetAsync("https://raw.githubusercontent.com/RROrg/rr/main/docs/models.json", function (result) {
                 _models = JSON.parse(result);
-                httpGetAsync("https://raw.githubusercontent.com/RROrg/rr/main/docs/addons.json", function (result) {
-                    _addons = JSON.parse(result);
-                    httpGetAsync("https://raw.githubusercontent.com/RROrg/rr/main/docs/modules.json", function (result) {
-                        _modules = JSON.parse(result);
-                        $("#model").on("change", changeModel);
-                        $("#version").on("change", changeVersion);
-                        $("#language").on("change", changeVersion);
-                        $('#addons').val("acpid,mountloader,reboottoloader");
-                        setModels();
+                httpGetAsync("https://raw.githubusercontent.com/RROrg/rr/main/docs/pats.json", function (result) {
+                    _pats = JSON.parse(result);
+                    httpGetAsync("https://raw.githubusercontent.com/RROrg/rr/main/docs/addons.json", function (result) {
+                        _addons = JSON.parse(result);
+                        httpGetAsync("https://raw.githubusercontent.com/RROrg/rr/main/docs/modules.json", function (result) {
+                            _modules = JSON.parse(result);
+                            $("#model").on("change", changeModel);
+                            $("#version").on("change", changeVersion);
+                            $("#language").on("change", changeVersion);
+                            $("#kernel").on("change", chanageKernel);
+                            $('#addons').val("acpid,mountloader,powersched,reboottoloader");
+                            setModels();
+                        });
                     });
                 });
             });
@@ -87,11 +92,9 @@
         function changeModel() {
             model = $("#model").val();
             var versions = [];
-            for (var P in _models) {
-                if (_models[P]["models"].includes(model)) {
-                    versions = Object.keys(_models[P]["productvers"]).reverse();
-                    break;
-                }
+            if (model in _pats) {
+                versions = Object.keys(_pats[model]);
+                versions.sort((a, b) => b.localeCompare(a));
             }
             $("#version")[0].options.length = 0;
             for (var i = 0; i < versions.length; i++) {
@@ -112,6 +115,7 @@
         function changeVersion() {
             createAddonsBtn();
             createModulesBtn();
+            chanageKernel();
         }
         function createAddonsBtn() {
             var language = $("#language").val();
@@ -136,7 +140,7 @@
 
         function createModulesBtn() {
             var model = $("#model").val();
-            var version = $("#version").val();
+            var version = $("#version").val().split(".").slice(0, 2).join(".");
             var platform = "";
             for (var P in _models) {
                 if (_models[P]["models"].includes(model)) {
@@ -159,6 +163,24 @@
                 $('#modules').val(extstr.join(","));
             }
         }
+
+        function chanageKernel() {
+            var model = $("#model").val();
+            var version = $("#version").val().split(".").slice(0, 2).join(".");
+            var kernel = $("#kernel").val();
+            if (model == "SA6400" && version == "7.2") {
+                $("#kernel_item").show();
+                if (kernel == "custom") {
+                    $('#modules_item').hide();
+                } else {
+                    $('#modules_item').show();
+                }
+            } else {
+                $('#modules_item').show();
+                $("#kernel_item").hide();
+            }
+        }
+
         function onclickext(type, ext) {
             var btnobj = $("#btn_" + ext);
             var extstr = $('#' + type).val().split(",");
@@ -185,9 +207,10 @@
             let formData = new FormData(form);
             var title = "custom";
             var body = {};
-            var _parameters = ["title", "format", "language", "model", "version", "addons", "modules"];
+            var _parameters = ["title", "format", "language", "model", "version", "kernel", "addons", "modules"];
             for (var key in _parameters) {
                 var name = _parameters[key];
+                if ($("#" + name).is(":hidden")) { continue; }
                 if (name == "title") {
                     if ($("#" + name).val()) {
                         title += " " + $("#" + name).val();
@@ -248,16 +271,17 @@
                 </marquee>
             </div>
         </div>
-        <div class="form-group mt-1 mb-2 ">
+        <div class="form-group mt-1 mb-2" id="title_item">
             <div class="form-group-header">
-                <label class="color-fg-default text-mono f6">Title: (Please do not delete the "custom " in the title of the issue creation page.)</label>
+                <label class="color-fg-default text-mono f6">Title: (Please do not delete the "custom " in the title of
+                    the issue creation page.)</label>
             </div>
             <div class="form-group-body">
                 <input class="form-control input-contrast input-sm" type="text" id="title" name="inputs[title]"
                     value="" />
             </div>
         </div>
-        <div class="form-group mt-1 mb-2 ">
+        <div class="form-group mt-1 mb-2" id="format_item">
             <div class="form-group-header">
                 <label class="color-fg-default text-mono f6">Format:</label>
             </div>
@@ -271,7 +295,7 @@
                 </select>
             </div>
         </div>
-        <div class="form-group mt-1 mb-2 ">
+        <div class="form-group mt-1 mb-2" id="language_item">
             <div class="form-group-header">
                 <label class="color-fg-default text-mono f6">Language:</label>
             </div>
@@ -296,7 +320,7 @@
                 </select>
             </div>
         </div>
-        <div class="form-group mt-1 mb-2 ">
+        <div class="form-group mt-1 mb-2" id="model_item">
             <div class="form-group-header">
                 <label class="color-fg-default text-mono f6">Model:</label>
             </div>
@@ -307,9 +331,10 @@
                 </select>
             </div>
         </div>
-        <div class="form-group mt-1 mb-2 ">
+        <div class="form-group mt-1 mb-2" id="version_item">
             <div class="form-group-header">
                 <label class="color-fg-default text-mono f6">Version:</label>
+                <a href="https://github.com/RROrg/rr/raw/main/docs/pats.xlsx"> Details</a>
             </div>
             <div class="form-group-body">
                 <select class="form-select form-control select-sm input-contrast" id="version" name="inputs[version]"
@@ -318,7 +343,19 @@
                 </select>
             </div>
         </div>
-        <div class="form-group mt-1 mb-2 ">
+        <div class="form-group mt-1 mb-2" id="kernel_item">
+            <div class="form-group-header">
+                <label class="color-fg-default text-mono f6">Kernel: (only "custom" supports Hyper-V, Xen.)</label>
+            </div>
+            <div class="form-group-body">
+                <select class="form-select form-control select-sm input-contrast" id="kernel" name="inputs[kernel]"
+                    value="">
+                    <option selected="selected" value="official">official</option>
+                    <option value="custom">custom</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group mt-1 mb-2" id="addons_item">
             <div class="form-group-header">
                 <label class="color-fg-default text-mono f6">Addons:</label>
                 <a href="https://github.com/RROrg/rr/raw/main/docs/addons.xlsx"> Details</a>
@@ -330,7 +367,7 @@
                 </div>
             </div>
         </div>
-        <div class="form-group mt-1 mb-2 ">
+        <div class="form-group mt-1 mb-2" id="modules_item">
             <div class="form-group-header">
                 <label class="color-fg-default text-mono f6">Modules:</label>
                 <a href="https://github.com/RROrg/rr/raw/main/docs/modules.xlsx"> Details</a>

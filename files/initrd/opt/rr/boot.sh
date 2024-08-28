@@ -9,6 +9,10 @@ set -e
 # Sanity check
 loaderIsConfigured || die "$(TEXT "Loader is not configured!")"
 
+# Clear logs for dbgutils addons
+rm -rf "${PART1_PATH}/logs" >/dev/null 2>&1 || true
+rm -rf /sys/fs/pstore/* >/dev/null 2>&1 || true
+
 # Check if machine has EFI
 [ -d /sys/firmware/efi ] && EFI=1 || EFI=0
 
@@ -16,12 +20,16 @@ BUS=$(getBus "${LOADER_DISK}")
 
 # Print text centralized
 clear
-[ -z "${COLUMNS}" ] && COLUMNS=50
+COLUMNS=$(ttysize 2>/dev/null | awk '{print $1}')
+[ -z "${COLUMNS}" ] && COLUMNS=80
 TITLE="$(printf "$(TEXT "Welcome to %s")" "$([ -z "${RR_RELEASE}" ] && echo "${RR_TITLE}" || echo "${RR_TITLE}(${RR_RELEASE})")")"
+DATE="$(date)"
 printf "\033[1;44m%*s\n" ${COLUMNS} ""
 printf "\033[1;44m%*s\033[A\n" ${COLUMNS} ""
-printf "\033[1;32m%*s\033[0m\n" $(((${#TITLE} + ${COLUMNS}) / 2)) "${TITLE}"
-printf "\033[1;44m%*s\033[0m\n" ${COLUMNS} ""
+printf "\033[1;31m%*s\033[0m\n" $(((${#TITLE} + ${COLUMNS}) / 2)) "${TITLE}"
+printf "\033[1;44m%*s\033[A\n" ${COLUMNS} ""
+printf "\033[1;32m%*s\033[0m\n" ${COLUMNS} "${DATE}"
+
 TITLE="BOOTING:"
 [ ${EFI} -eq 1 ] && TITLE+=" [UEFI]" || TITLE+=" [BIOS]"
 [ "${BUS}" = "usb" ] && TITLE+=" [${BUS^^} flashdisk]" || TITLE+=" [${BUS^^} DoM]"
@@ -76,7 +84,7 @@ if ! readConfigMap "addons" "${USER_CONFIG_FILE}" | grep -q nvmesystem; then
   HASATA=0
   for D in $(lsblk -dpno NAME); do
     [ "${D}" = "${LOADER_DISK}" ] && continue
-    if [ "$(getBus "${D}")" = "sata" -o "$(getBus "${D}")" = "scsi" ]; then
+    if echo "sata sas scsi" | grep -qw "$(getBus "${D}")"; then
       HASATA=1
       break
     fi
@@ -138,7 +146,7 @@ if [ "${DT}" = "true" ]; then
   CMDLINE["syno_ttyS0"]="serial,0x3f8"
   CMDLINE["syno_ttyS1"]="serial,0x2f8"
 else
-  # CMDLINE["SMBusHddDynamicPower"]="1"
+  CMDLINE["SMBusHddDynamicPower"]="1"
   CMDLINE["syno_hdd_detect"]="0"
   CMDLINE["syno_hdd_powerup_seq"]="0"
 fi
@@ -156,6 +164,7 @@ CMDLINE['rootwait']=""
 CMDLINE['loglevel']="15"
 CMDLINE['log_buf_len']="32M"
 CMDLINE['panic']="${KERNELPANIC:-0}"
+CMDLINE['pcie_aspm']="off"
 CMDLINE['modprobe.blacklist']="${MODBLACKLIST}"
 
 # if [ -n "$(ls /dev/mmcblk* 2>/dev/null)" ] && [ ! "${BUS}" = "mmc" ] && [ ! "${EMMCBOOT}" = "true" ]; then
@@ -169,7 +178,12 @@ if [ "${DT}" = "true" ] && ! echo "epyc7002 purley broadwellnkv2" | grep -wq "${
     [ ! "${CMDLINE['modprobe.blacklist']}" = "" ] && CMDLINE['modprobe.blacklist']+=","
     CMDLINE['modprobe.blacklist']+="mpt3sas"
   fi
+#else
+#  CMDLINE['scsi_mod.scan']="sync"  # TODO: redpill panic of vmware scsi? (add to cmdline)
 fi
+
+# CMDLINE['kvm.ignore_msrs']="1"
+# CMDLINE['kvm.report_ignored_msrs']="0"
 
 if echo "apollolake geminilake" | grep -wq "${PLATFORM}"; then
   CMDLINE["intel_iommu"]="igfx_off"
@@ -196,23 +210,33 @@ done
 CMDLINE_LINE=$(echo "${CMDLINE_LINE}" | sed 's/^ //') # Remove leading space
 echo -e "$(TEXT "Cmdline:\n")\033[1;36m${CMDLINE_LINE}\033[0m"
 
-# Save command line to grubenv
-if echo "apollolake geminilake purley" | grep -wq "${PLATFORM}"; then
-  if grep -q "^flags.*x2apic.*" /proc/cpuinfo; then
-    checkCmdline "rr_cmdline" "nox2apic" || addCmdline "rr_cmdline" "nox2apic"
-  fi
-else
-  checkCmdline "rr_cmdline" "nox2apic" && delCmdline "rr_cmdline" "nox2apic"
-fi
 DIRECT="$(readConfigKey "directboot" "${USER_CONFIG_FILE}")"
 if [ "${DIRECT}" = "true" ]; then
+  grub-editenv ${USER_GRUBENVFILE} set rr_version="$([ -z "${RR_RELEASE}" ] && echo "${RR_TITLE}" || echo "${RR_TITLE}(${RR_RELEASE})")"
+  grub-editenv ${USER_GRUBENVFILE} set dsm_model="${MODEL}(${PLATFORM})"
+  grub-editenv ${USER_GRUBENVFILE} set dsm_version="${PRODUCTVER}(${BUILDNUM}$([ ${SMALLNUM:-0} -ne 0 ] && echo "u${SMALLNUM}"))"
+  grub-editenv ${USER_GRUBENVFILE} set dsm_kernel="${KERNEL}"
+  grub-editenv ${USER_GRUBENVFILE} set dsm_lkm="${LKM}"
+  grub-editenv ${USER_GRUBENVFILE} set sys_dmi="${DMI}"
+  grub-editenv ${USER_GRUBENVFILE} set sys_cpu="${CPU}"
+  grub-editenv ${USER_GRUBENVFILE} set sys_mem="${MEM}"
+
   CMDLINE_DIRECT=$(echo ${CMDLINE_LINE} | sed 's/>/\\\\>/g') # Escape special chars
   grub-editenv ${USER_GRUBENVFILE} set dsm_cmdline="${CMDLINE_DIRECT}"
   grub-editenv ${USER_GRUBENVFILE} set next_entry="direct"
+
   echo -e "\033[1;33m$(TEXT "Reboot to boot directly in DSM")\033[0m"
   reboot
   exit 0
 else
+  grub-editenv ${USER_GRUBENVFILE} unset rr_version
+  grub-editenv ${USER_GRUBENVFILE} unset dsm_model
+  grub-editenv ${USER_GRUBENVFILE} unset dsm_version
+  grub-editenv ${USER_GRUBENVFILE} unset dsm_kernel
+  grub-editenv ${USER_GRUBENVFILE} unset dsm_lkm
+  grub-editenv ${USER_GRUBENVFILE} unset sys_dmi
+  grub-editenv ${USER_GRUBENVFILE} unset sys_cpu
+  grub-editenv ${USER_GRUBENVFILE} unset sys_mem
   grub-editenv ${USER_GRUBENVFILE} unset dsm_cmdline
   grub-editenv ${USER_GRUBENVFILE} unset next_entry
   ETHX=$(ls /sys/class/net/ 2>/dev/null | grep -v lo) || true
@@ -305,21 +329,24 @@ else
   fi
 
   # Executes DSM kernel via KEXEC
-  KEXECARGS=""
+  KEXECARGS="-a"
   if [ $(echo "${KVER:-4}" | cut -d'.' -f1) -lt 4 ] && [ ${EFI} -eq 1 ]; then
     echo -e "\033[1;33m$(TEXT "Warning, running kexec with --noefi param, strange things will happen!!")\033[0m"
-    KEXECARGS="--noefi"
+    KEXECARGS+=" --noefi"
   fi
   kexec ${KEXECARGS} -l "${MOD_ZIMAGE_FILE}" --initrd "${MOD_RDGZ_FILE}" --command-line="${CMDLINE_LINE}" >"${LOG_FILE}" 2>&1 || dieLog
+
   echo -e "\033[1;37m$(TEXT "Booting ...")\033[0m"
+  # show warning message
   for T in $(busybox w 2>/dev/null | grep -v 'TTY' | awk '{print $2}'); do
     [ -w "/dev/${T}" ] && echo -e "\n\033[1;43m$(TEXT "[This interface will not be operational. Please wait a few minutes.\nFind DSM via http://find.synology.com/ or Synology Assistant and connect.]")\033[0m\n" >"/dev/${T}" 2>/dev/null || true
   done
 
-  # Clear logs for dbgutils addons
-  rm -rf "${PART1_PATH}/logs" >/dev/null 2>&1 || true
+  # # Unload all network interfaces
+  # for D in $(readlink /sys/class/net/*/device/driver); do rmmod -f "$(basename ${D})" 2>/dev/null || true; done
 
+  # Reboot
   KERNELWAY="$(readConfigKey "kernelway" "${USER_CONFIG_FILE}")"
-  [ "${KERNELWAY}" = "kexec" ] && kexec -a -e || poweroff
+  [ "${KERNELWAY}" = "kexec" ] && kexec -e || poweroff
   exit 0
 fi
